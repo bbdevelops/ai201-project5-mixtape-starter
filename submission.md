@@ -202,10 +202,105 @@ After reading all five issue descriptions and the affected service files, I plan
 
 ## Root Cause Analysis Entries
 
-*(To be completed in Milestones 2–3)*
+### Bug #5 — The last song in a playlist never shows up
+
+**How I reproduced it:**
+
+1. Confirmed the seed database has 7 songs in the "Late Night Vibes" playlist by directly querying the `playlist_entries` table:
+   ```
+   .venv\Scripts\python.exe -c "from app import create_app, db; from models import playlist_entries; app = create_app(); ctx = app.app_context(); ctx.push(); entries = db.session.execute(db.select(playlist_entries).where(playlist_entries.c.playlist_id == '5a32887d-77a3-4992-94ae-16a37c0b252a').order_by(playlist_entries.c.position)).fetchall(); print(f'{len(entries)} entries'); [print(f'  Position {e.position}: song_id={e.song_id}') for e in entries]"
+   ```
+   Result: **7 entries** at positions 1–7. The 7th song (position 7) is "Free Throws" by Hoop Dreams.
+
+2. Hit the API endpoint to retrieve the playlist's songs:
+   ```
+   GET http://127.0.0.1:5000/playlists/5a32887d-77a3-4992-94ae-16a37c0b252a/songs
+   ```
+   Result: `"count": 6` — only 6 songs returned. The last song ("Free Throws" at position 7) is **missing** from the response. No error is raised; the response looks normal but has fewer songs than expected.
+
+3. The bug is **unconditional** — it affects every playlist, every time. Any `GET /playlists/<id>/songs` request will silently drop the last song.
+
+**How I found the root cause:** *(To be completed in Milestone 3)*
+
+**The root cause:** *(To be completed in Milestone 3)*
+
+**My fix and side-effect check:** *(To be completed in Milestone 3)*
+
+---
+
+### Bug #1 — My listening streak keeps resetting
+
+**How I reproduced it:**
+
+1. Confirmed darius's current state via the API:
+   ```
+   GET http://127.0.0.1:5000/users/59ed75fd-7e44-4442-92d0-8a545a986b57/streak
+   ```
+   Result: `"streak": 3`. Darius has a 3-day streak. His `last_listened_at` is `2026-07-04` (Saturday, July 4th — yesterday).
+
+2. Confirmed today is **Sunday, July 5, 2026** — `datetime(2026, 7, 5).weekday()` returns `6` (Sunday in Python's weekday convention). This means darius listened yesterday (Saturday) and we're recording a listen today (Sunday) — a legitimate consecutive-day listen that should increment the streak to 4.
+
+3. Recorded a listening event for darius on Sunday:
+   ```
+   POST http://127.0.0.1:5000/songs/daeac9a4-e0ec-492a-8c96-21fd7c1465e2/listen
+   Body: {"user_id": "59ed75fd-7e44-4442-92d0-8a545a986b57"}
+   ```
+   Result: 201 — listening event created successfully.
+
+4. Checked the streak again:
+   ```
+   GET http://127.0.0.1:5000/users/59ed75fd-7e44-4442-92d0-8a545a986b57/streak
+   ```
+   Result: `"streak": 1` — **the streak was reset from 3 to 1** instead of incrementing to 4.
+
+5. The bug **only fires on Sundays**. The condition on line 73 of `streak_service.py` (`today.weekday() != 6`) prevents the streak from incrementing when today is Sunday, even for a legitimate consecutive-day listen. On any other day of the week, a Saturday→Sunday→Monday listening pattern would increment correctly on Monday, but the Sunday listen itself resets the streak.
+
+**How I found the root cause:** *(To be completed in Milestone 3)*
+
+**The root cause:** *(To be completed in Milestone 3)*
+
+**My fix and side-effect check:** *(To be completed in Milestone 3)*
+
+---
+
+### Bug #3 — The same song keeps showing up twice in search
+
+**How I reproduced it:**
+
+1. Identified the conditions needed: the bug only affects songs with **2+ tags**, because the `outerjoin` on `song_tags` in `search_service.py` produces one SQL row per tag match. Songs with 0 or 1 tag produce exactly 1 row and are never duplicated.
+
+2. Tested with "Crown Heights Anthem" (3 tags: rap, hip-hop, boom bap) by examining the raw SQL output:
+   ```sql
+   SELECT s.id, s.title, st.tag_id
+   FROM song s
+   LEFT OUTER JOIN song_tags st ON s.id = st.song_id
+   WHERE s.title LIKE '%Crown%' OR s.artist LIKE '%Crown%'
+   ```
+   Result: **3 rows** — the same song appears once per tag, producing 3 identical rows in the join result.
+
+3. Verified the duplication manifests in SQLAlchemy 2.0's `select()` query style:
+   ```python
+   stmt = select(Song).outerjoin(song_tags, Song.id == song_tags.c.song_id).filter(...)
+   results = db.session.execute(stmt).scalars().all()
+   # Returns 3 Song objects — all "Crown Heights Anthem"
+   ```
+
+4. Noted that the current code uses the legacy `session.query(Song).all()` pattern, which **masks** the duplicates via SQLAlchemy 2.0's identity map (returning 1 object instead of 3). However, the underlying SQL is still producing 3 rows, and:
+   - The bug would fully manifest if the code were migrated to SA 2.0's recommended `select()` style
+   - The `outerjoin` is **unnecessary** — tags are already loaded via the ORM `relationship("Tag", secondary=song_tags, lazy="subquery")` defined in `models.py`
+   - The redundant join causes unnecessary database work (row multiplication) even when the ORM deduplicates
+
+5. Contrasted with "Midnight Drive" (0 tags) — search returns exactly 1 row, no duplication. And with "Block Party" (1 tag) — also 1 row. Only multi-tagged songs are affected.
+
+**How I found the root cause:** *(To be completed in Milestone 3)*
+
+**The root cause:** *(To be completed in Milestone 3)*
+
+**My fix and side-effect check:** *(To be completed in Milestone 3)*
 
 ---
 
 ## Commit History Screenshot
 
 *(To be completed in Milestone 4)*
+
