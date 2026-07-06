@@ -208,17 +208,19 @@ After reading all five issue descriptions and the affected service files, I plan
 
 1. Confirmed the seed database has 7 songs in the "Late Night Vibes" playlist by directly querying the `playlist_entries` table:
    ```
-   .venv\Scripts\python.exe -c "from app import create_app, db; from models import playlist_entries; app = create_app(); ctx = app.app_context(); ctx.push(); entries = db.session.execute(db.select(playlist_entries).where(playlist_entries.c.playlist_id == '5a32887d-77a3-4992-94ae-16a37c0b252a').order_by(playlist_entries.c.position)).fetchall(); print(f'{len(entries)} entries'); [print(f'  Position {e.position}: song_id={e.song_id}') for e in entries]"
+   .venv\Scripts\python.exe -c "from app import create_app, db; from models import playlist_entries; app = create_app(); ctx = app.app_context(); ctx.push(); entries = db.session.execute(db.select(playlist_entries).where(playlist_entries.c.playlist_id == '19a4c6c9-5457-4d1b-8104-77551cb28d6b').order_by(playlist_entries.c.position)).fetchall(); print(f'{len(entries)} entries'); [print(f'  Position {e.position}: song_id={e.song_id}') for e in entries]"
    ```
    Result: **7 entries** at positions 1–7. The 7th song (position 7) is "Free Throws" by Hoop Dreams.
 
 2. Hit the API endpoint to retrieve the playlist's songs:
    ```
-   GET http://127.0.0.1:5000/playlists/5a32887d-77a3-4992-94ae-16a37c0b252a/songs
+   GET http://127.0.0.1:5000/playlists/19a4c6c9-5457-4d1b-8104-77551cb28d6b/songs
    ```
    Result: `"count": 6` — only 6 songs returned. The last song ("Free Throws" at position 7) is **missing** from the response. No error is raised; the response looks normal but has fewer songs than expected.
 
 3. The bug is **unconditional** — it affects every playlist, every time. Any `GET /playlists/<id>/songs` request will silently drop the last song.
+
+4. **Automated Reproduction:** I codified this reproduction into a standalone script. Run `python bug-reproductions/reproduce_bug5.py` to see the actual database count compared directly against the service's returned list size.
 
 **How I found the root cause:** *(To be completed in Milestone 3)*
 
@@ -232,28 +234,10 @@ After reading all five issue descriptions and the affected service files, I plan
 
 **How I reproduced it:**
 
-1. Confirmed darius's current state via the API:
-   ```
-   GET http://127.0.0.1:5000/users/59ed75fd-7e44-4442-92d0-8a545a986b57/streak
-   ```
-   Result: `"streak": 3`. Darius has a 3-day streak. His `last_listened_at` is `2026-07-04` (Saturday, July 4th — yesterday).
-
-2. Confirmed today is **Sunday, July 5, 2026** — `datetime(2026, 7, 5).weekday()` returns `6` (Sunday in Python's weekday convention). This means darius listened yesterday (Saturday) and we're recording a listen today (Sunday) — a legitimate consecutive-day listen that should increment the streak to 4.
-
-3. Recorded a listening event for darius on Sunday:
-   ```
-   POST http://127.0.0.1:5000/songs/daeac9a4-e0ec-492a-8c96-21fd7c1465e2/listen
-   Body: {"user_id": "59ed75fd-7e44-4442-92d0-8a545a986b57"}
-   ```
-   Result: 201 — listening event created successfully.
-
-4. Checked the streak again:
-   ```
-   GET http://127.0.0.1:5000/users/59ed75fd-7e44-4442-92d0-8a545a986b57/streak
-   ```
-   Result: `"streak": 1` — **the streak was reset from 3 to 1** instead of incrementing to 4.
-
-5. The bug **only fires on Sundays**. The condition on line 73 of `streak_service.py` (`today.weekday() != 6`) prevents the streak from incrementing when today is Sunday, even for a legitimate consecutive-day listen. On any other day of the week, a Saturday→Sunday→Monday listening pattern would increment correctly on Monday, but the Sunday listen itself resets the streak.
+1. The bug is highly dependent on the current day of the week. Because the API uses the real-time `datetime.now(timezone.utc)`, hitting the `/listen` endpoint only reproduces the bug if the current UTC time is a Sunday. If tested on a Monday UTC (as is currently the case, `2026-07-06`), the streak will successfully increment, which masks the bug.
+2. To reliably reproduce it regardless of the real-world time, I codified a script that simulates a Saturday-to-Sunday transition by explicitly passing a Sunday `datetime` into the service function. Run `python bug-reproductions/reproduce_bug1.py` to execute this.
+3. **Result:** The script outputs `New streak: 1`. The streak was erroneously reset from 3 to 1 instead of incrementing to 4.
+4. **Conclusion:** The bug specifically fires on Sundays. The condition on line 73 of `streak_service.py` (`today.weekday() != 6`) prevents the streak from incrementing when `today` is Sunday (which evaluates to `6` in Python). Because of this logic, legitimate consecutive-day listens on Sundays fall through to the `else` block, which resets the streak.
 
 **How I found the root cause:** *(To be completed in Milestone 3)*
 
@@ -291,6 +275,57 @@ After reading all five issue descriptions and the affected service files, I plan
    - The redundant join causes unnecessary database work (row multiplication) even when the ORM deduplicates
 
 5. Contrasted with "Midnight Drive" (0 tags) — search returns exactly 1 row, no duplication. And with "Block Party" (1 tag) — also 1 row. Only multi-tagged songs are affected.
+
+6. **Automated Reproduction:** I codified this into a script. Run `python bug-reproductions/reproduce_bug3.py` to see the masked Python results side-by-side with the raw duplicated SQL rows.
+
+**How I found the root cause:** *(To be completed in Milestone 3)*
+
+**The root cause:** *(To be completed in Milestone 3)*
+
+**My fix and side-effect check:** *(To be completed in Milestone 3)*
+
+---
+
+### Bug #2 — Friends Listening Now shows people from yesterday
+
+**How I reproduced it:**
+
+1. Examined `feed_service.py` and saw `RECENT_THRESHOLD` is set to `timedelta(hours=24)`. This confirms that anyone who listened within the last 24 hours will show up in the "Listening Now" feed.
+2. Looked at `seed_data.py` and saw it creates "older events" spaced by 8 hours. For instance, it generates a listening event for `simone` 18 hours ago, and `kenji` 26 hours ago.
+3. If we query `darius`'s feed (whose friends are `nova` and `simone`):
+   ```
+   GET http://127.0.0.1:5000/feed/7fe13470-0e58-49ad-9d52-b88c55e41a0f/listening-now
+   ```
+   Result: The API will return `nova` (listened 2 hours ago) and `simone` (listened 15 minutes ago, but if we remove her recent listen, it would return her 18-hour-old listen). The 24-hour threshold directly allows events from "yesterday" (e.g. 18-23 hours ago) to appear as "Listening Now".
+
+4. **Automated Reproduction:** I wrote a script that isolates this test by creating a 23-hour-old listening event and confirming it still appears in the feed. Run `python bug-reproductions/reproduce_bug2.py`.
+
+**How I found the root cause:** *(To be completed in Milestone 3)*
+
+**The root cause:** *(To be completed in Milestone 3)*
+
+**My fix and side-effect check:** *(To be completed in Milestone 3)*
+
+---
+
+### Bug #4 — I got notified when a friend added my song to a playlist but not when they rated it
+
+**How I reproduced it:**
+
+1. Identified the requirement: a user must rate a song that was originally shared by someone else.
+2. Hit the rate endpoint to rate a song shared by Nova (`users[0]`), using Darius's account (`users[1]`):
+   ```
+   POST http://127.0.0.1:5000/songs/77b7fc9d-375c-4737-83af-0f78708f201b/rate
+   Body: {"user_id": "7fe13470-0e58-49ad-9d52-b88c55e41a0f", "score": 5}
+   ```
+   Result: 201 Created — the rating was recorded successfully.
+3. Checked Nova's notifications to see if she was alerted:
+   ```
+   GET http://127.0.0.1:5000/users/4e553a2e-8f4d-4112-9ee4-d8c3d0d27c99/notifications
+   ```
+   Result: No new rating notification was returned. The API only returned the pre-existing seed data notification (for a song added to a playlist). The rating notification was completely missing.
+
+4. **Automated Reproduction:** To verify this programmatically without manual API calls, I wrote a reproduction script that rates a song and asserts that the notification count fails to increase. Run `python bug-reproductions/reproduce_bug4.py`.
 
 **How I found the root cause:** *(To be completed in Milestone 3)*
 
