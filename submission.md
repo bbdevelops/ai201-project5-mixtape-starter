@@ -222,11 +222,18 @@ After reading all five issue descriptions and the affected service files, I plan
 
 4. **Automated Reproduction:** I codified this reproduction into a standalone script. Run `python bug-reproductions/reproduce_bug5.py` to see the actual database count compared directly against the service's returned list size.
 
-**How I found the root cause:** *(To be completed in Milestone 3)*
+**How I found the root cause:** 
+I started by investigating the `get_playlist_songs` function in `services/playlist_service.py` since that is the service responsible for retrieving a playlist's songs. I examined the SQLAlchemy query, which correctly joins `Song` with `playlist_entries` and orders by `playlist_entries.c.position` in ascending order. The query itself was fetching all songs accurately. However, looking at the final return statement, I noticed it was applying a Python list slice `[:-1]` to the query results before serializing them with `.to_dict()`.
 
-**The root cause:** *(To be completed in Milestone 3)*
+**The root cause:** 
+The root cause is a hardcoded list slice `songs[:-1]` on line 66 of `services/playlist_service.py`. This slice unconditionally drops the last element from the list of songs returned by the database. 
+When evaluating edge cases, this causes even more confusing behavior: 
+- For a playlist with exactly 1 song, `songs[:-1]` results in an empty list, hiding the single song entirely from the user. 
+- For an empty playlist (0 songs), `songs[:-1]` returns an empty list, avoiding errors, but the slice itself is unnecessary.
 
-**My fix and side-effect check:** *(To be completed in Milestone 3)*
+**My fix and side-effect check:** 
+I removed the `[:-1]` slice from the return statement, changing it to `return [song.to_dict() for song in songs]`. This ensures all songs retrieved from the database are serialized and returned to the client.
+For the side-effect check, I verified that this change doesn't break playlists of varying lengths. Since `[song.to_dict() for song in songs]` iterates over the list normally, it gracefully handles 0-song, 1-song, and N-song playlists without throwing index out-of-bounds exceptions or silencing data. I also ran `pytest tests/test_playlists.py` and `python bug-reproductions/reproduce_bug5.py` to confirm the returned API count matched the database count.
 
 ---
 
