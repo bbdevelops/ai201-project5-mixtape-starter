@@ -10,7 +10,7 @@ from app import db
 from models import User, Song, ListeningEvent
 
 
-RECENT_THRESHOLD = timedelta(hours=24)
+RECENT_THRESHOLD = timedelta(hours=1)
 
 
 def get_friends_listening_now(user_id: str) -> list[dict]:
@@ -35,28 +35,48 @@ def get_friends_listening_now(user_id: str) -> list[dict]:
     if not friend_ids:
         return []
 
-    recent_events = (
-        db.session.query(ListeningEvent)
+    # Subquery to get the latest listening event per friend
+    subq = (
+        db.session.query(
+            ListeningEvent.user_id,
+            db.func.max(ListeningEvent.listened_at).label('max_listened_at')
+        )
         .filter(
             ListeningEvent.user_id.in_(friend_ids),
-            ListeningEvent.listened_at >= cutoff,
+            ListeningEvent.listened_at >= cutoff
         )
+        .group_by(ListeningEvent.user_id)
+        .subquery()
+    )
+
+    # Main query eager loading User and Song
+    recent_events = (
+        db.session.query(ListeningEvent, User, Song)
+        .join(subq, db.and_(
+            ListeningEvent.user_id == subq.c.user_id,
+            ListeningEvent.listened_at == subq.c.max_listened_at
+        ))
+        .join(User, ListeningEvent.user_id == User.id)
+        .join(Song, ListeningEvent.song_id == Song.id)
         .order_by(desc(ListeningEvent.listened_at))
         .all()
     )
 
-    # Deduplicate: only show the most recent song per friend
+    # Deduplicate in case of exact timestamp collisions
     seen_friends = set()
     result = []
-    for event in recent_events:
+    for event, friend, song in recent_events:
         if event.user_id not in seen_friends:
             seen_friends.add(event.user_id)
-            friend = db.session.get(User, event.user_id)
-            song = db.session.get(Song, event.song_id)
+            
+            listened_at = event.listened_at
+            if listened_at.tzinfo is None:
+                listened_at = listened_at.replace(tzinfo=timezone.utc)
+                
             result.append({
                 "friend": friend.to_dict(),
                 "song": song.to_dict(),
-                "listened_at": event.listened_at.isoformat(),
+                "listened_at": listened_at.isoformat(),
             })
 
     return result

@@ -315,11 +315,19 @@ For my side-effect check, I ran `pytest tests/test_search.py` to ensure that sea
 
 4. **Automated Reproduction:** I wrote a script that isolates this test by creating a 23-hour-old listening event and confirming it still appears in the feed. Run `python bug-reproductions/reproduce_bug2.py`.
 
-**How I found the root cause:** *(To be completed in Milestone 3)*
+**How I found the root cause:** 
+I examined `services/feed_service.py`, which is responsible for the feed logic, to see how `get_friends_listening_now` filters events. I observed the variable `RECENT_THRESHOLD` at the top of the file, which dictates the cutoff time for the query (`cutoff = datetime.now(timezone.utc) - RECENT_THRESHOLD`).
 
-**The root cause:** *(To be completed in Milestone 3)*
+**The root cause:** 
+The `RECENT_THRESHOLD` used to identify "Listening Now" events was set to `timedelta(hours=24)`. This loose threshold meant that any listening event within the entire past day was technically considered a current event. As a result, friends who listened to music yesterday would misleadingly show up as "Listening Now" in the application interface.
 
-**My fix and side-effect check:** *(To be completed in Milestone 3)*
+**My fix and side-effect check:** 
+I reduced the `RECENT_THRESHOLD` in `services/feed_service.py` from 24 hours to 1 hour (`timedelta(hours=1)`), narrowing the definition of "now" to a more realistic window.
+In addition to fixing the bug, I addressed three related edge-cases in the same function:
+1. **Data Over-fetching**: I rewrote the SQL query to use a subquery to fetch only the `max(listened_at)` per user, eliminating the need to pull hundreds of discarded rows into Python memory.
+2. **N+1 Query Problem**: I added `join` clauses to eagerly load the `User` and `Song` records within the initial query instead of calling `db.session.get()` inside the deduplication loop.
+3. **Timezone Info Loss**: I added a safeguard to re-attach the `timezone.utc` object before calling `.isoformat()` to prevent naive datetimes from causing discrepancies on the frontend.
+For the side-effect check, I created a brand new test suite in `tests/test_feed.py` as a regression test. This test suite verifies that old events are ignored, non-friends are excluded, and multiple listens are properly deduplicated. I also verified the fix works end-to-end via the `bug-reproductions/reproduce_bug2.py` script.
 
 ---
 
