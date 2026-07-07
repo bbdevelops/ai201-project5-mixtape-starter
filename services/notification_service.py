@@ -98,7 +98,10 @@ def rate_song(user_id: str, song_id: str, score: int) -> Rating:
         user_id=user_id, song_id=song_id
     ).first()
 
+    score_changed = True
     if existing:
+        if existing.score == score:
+            score_changed = False
         existing.score = score
         rating = existing
     else:
@@ -106,6 +109,35 @@ def rate_song(user_id: str, song_id: str, score: int) -> Rating:
         db.session.add(rating)
 
     db.session.commit()
+
+    if score_changed and song.shared_by != user_id:
+        from datetime import datetime, timedelta, timezone
+        from sqlalchemy import desc
+
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
+        safe_title = song.title.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+        prefix = f"{rater.username} rated your song '{safe_title}'"
+        
+        recent_notif = db.session.query(Notification).filter(
+            Notification.user_id == song.shared_by,
+            Notification.notification_type == "song_rated",
+            Notification.body.like(f"{prefix}%", escape='\\'),
+            Notification.created_at >= cutoff
+        ).order_by(desc(Notification.created_at)).first()
+
+        new_body = f"{rater.username} rated your song '{song.title}' {score} stars."
+        
+        if recent_notif:
+            recent_notif.body = new_body
+            recent_notif.created_at = datetime.now(timezone.utc)
+            recent_notif.read = False
+            db.session.commit()
+        else:
+            create_notification(
+                user_id=song.shared_by,
+                notification_type="song_rated",
+                body=new_body
+            )
 
     return rating
 

@@ -350,11 +350,15 @@ For the side-effect check, I created a brand new test suite in `tests/test_feed.
 
 4. **Automated Reproduction:** To verify this programmatically without manual API calls, I wrote a reproduction script that rates a song and asserts that the notification count fails to increase. Run `python bug-reproductions/reproduce_bug4.py`.
 
-**How I found the root cause:** *(To be completed in Milestone 3)*
+**How I found the root cause:** 
+I examined `services/notification_service.py` to see how ratings are processed. I noticed that the `add_to_playlist` function explicitly creates a `song_added_to_playlist` notification, but the `rate_song` function only updates or inserts a `Rating` record and commits to the database, entirely missing the notification logic.
 
-**The root cause:** *(To be completed in Milestone 3)*
+**The root cause:** 
+The `rate_song` function lacked the logic to call `create_notification()`, meaning song sharers were completely unaware when their songs received ratings from friends.
 
-**My fix and side-effect check:** *(To be completed in Milestone 3)*
+**My fix and side-effect check:** 
+I added notification logic directly into `rate_song`. To prevent notification spam if a user rapidly updates their rating (e.g. changing from 4 to 5 stars), I implemented a 1-hour anti-spam cooldown. The system queries for a recent rating notification from the same rater within the last hour. If it finds one, it overwrites the body with the new score and marks it as unread instead of creating a duplicate.
+For the side-effect check, I ran the `bug-reproductions/reproduce_bug4.py` script to confirm the notification count now correctly increments. I also created a regression test suite in `tests/test_notifications.py` to ensure self-ratings don't trigger notifications, and that the 1-hour spam protection correctly updates rather than duplicates notifications.
 
 ---
 
