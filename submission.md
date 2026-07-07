@@ -2,7 +2,9 @@
 
 ## AI Usage
 
-*(To be completed in Milestone 4)*
+During this project, I used an AI coding assistant to help debug and refactor several issues. Specifically, I asked the AI to explain the underlying mechanisms for several complex bugs, such as tracing how SQLAlchemy's `outerjoin` causes row duplication in Bug #3, and summarizing the best practices for fixing N+1 query performance and timezone-naive datetimes in Bug #2.
+
+While the AI was helpful in generating the code for these fixes, its initial approach was sometimes incomplete. For example, during Bug #4, I had to independently identify that adding rating notifications would cause spam issues if users rapidly updated their scores. I had to explicitly push the AI to implement a 1-hour cooldown window to mitigate this edge case. Furthermore, I handled all manual `git` commits and personally executed the reproduction scripts to verify that the AI's solutions successfully resolved the bugs as intended.
 
 ---
 
@@ -364,5 +366,5 @@ For the side-effect check, I ran the `bug-reproductions/reproduce_bug4.py` scrip
 
 ## Commit History Screenshot
 
-*(To be completed in Milestone 4)*
+![Gitlog](./assets/Screenshot_2026-07-07_054801.png)
 
