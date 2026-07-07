@@ -246,11 +246,15 @@ For the side-effect check, I verified that this change doesn't break playlists o
 3. **Result:** The script outputs `New streak: 1`. The streak was erroneously reset from 3 to 1 instead of incrementing to 4.
 4. **Conclusion:** The bug specifically fires on Sundays. The condition on line 73 of `streak_service.py` (`today.weekday() != 6`) prevents the streak from incrementing when `today` is Sunday (which evaluates to `6` in Python). Because of this logic, legitimate consecutive-day listens on Sundays fall through to the `else` block, which resets the streak.
 
-**How I found the root cause:** *(To be completed in Milestone 3)*
+**How I found the root cause:** 
+I examined the `update_listening_streak` function in `services/streak_service.py` because this function contains the core logic for updating listening streaks. I noticed a suspicious check on line 73: `elif days_since_last == 1 and today.weekday() != 6:`. This logic intercepts what should be a standard consecutive day update and filters it by the day of the week.
 
-**The root cause:** *(To be completed in Milestone 3)*
+**The root cause:** 
+The streak increment logic explicitly prevented the streak from increasing on Sundays. Python's `datetime.weekday()` returns `6` for Sunday. By asserting `today.weekday() != 6`, the application blocked streaks from incrementing when the user listened on a Sunday, instead letting it fall through to the `else` branch, which erroneously resets the streak to 1. This means any valid weekend listening streaks were interrupted at the end of the week.
 
-**My fix and side-effect check:** *(To be completed in Milestone 3)*
+**My fix and side-effect check:** 
+I removed the `and today.weekday() != 6` constraint from the increment condition in `services/streak_service.py`, leaving simply `elif days_since_last == 1:`. This ensures streaks are evaluated purely on calendar days without respect to the day of the week.
+To confirm the side-effects and that I didn't break related functionality, I ran `pytest tests/test_streaks.py` to ensure all streak boundary logic correctly applies, and particularly observed that `test_streak_increments_on_sunday` passes successfully. I also verified the reproduction script `bug-reproductions/reproduce_bug1.py` correctly increments to 4 instead of resetting to 1.
 
 ---
 
