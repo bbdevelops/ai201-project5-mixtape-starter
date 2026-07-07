@@ -289,11 +289,15 @@ To confirm the side-effects and that I didn't break related functionality, I ran
 
 6. **Automated Reproduction:** I codified this into a script. Run `python bug-reproductions/reproduce_bug3.py` to see the masked Python results side-by-side with the raw duplicated SQL rows.
 
-**How I found the root cause:** *(To be completed in Milestone 3)*
+**How I found the root cause:** 
+I looked into `services/search_service.py` specifically examining the `search_songs` function. I noted that the SQL query being constructed included `.outerjoin(song_tags, Song.id == song_tags.c.song_id)`. Knowing that `Song` and `Tag` have a many-to-many relationship managed by SQLAlchemy (`db.relationship("Tag", secondary=song_tags, lazy="subquery")` in `models.py`), I recognized this explicit join was redundant for loading tags and instead resulted in a cartesian product of rows for each matching tag. 
 
-**The root cause:** *(To be completed in Milestone 3)*
+**The root cause:** 
+The redundant `outerjoin` on `song_tags` caused the underlying database to return one row for every tag associated with a matching song. For songs with multiple tags, like "Crown Heights Anthem" which has 3 tags, the SQL engine returned 3 identical `Song` rows. Even though SQLAlchemy 2.0's identity map masks this in modern usage, using `.all()` in this legacy context returned a list with multiple duplicate object references, creating repeated entries in the API response.
 
-**My fix and side-effect check:** *(To be completed in Milestone 3)*
+**My fix and side-effect check:** 
+I removed `.outerjoin(song_tags, Song.id == song_tags.c.song_id)` from the query completely. The tags are natively loaded through SQLAlchemy's defined relationships, so the explicit join was completely unnecessary.
+For my side-effect check, I ran `pytest tests/test_search.py` to ensure that search functionality continued working correctly without the join and that tags still appeared in the results. I also ran `python bug-reproductions/reproduce_bug3.py` and observed that the raw SQL execution returned exactly 1 row instead of 3 for multi-tagged songs, verifying the duplicates were eliminated at the database level.
 
 ---
 
